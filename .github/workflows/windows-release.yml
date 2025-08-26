@@ -1,0 +1,64 @@
+name: Windows - Release build (aaruremote)
+
+on:
+  push:
+    branches: [ "devel", "main" ]
+  pull_request:
+    branches: [ "devel", "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ninja (used by CMake when needed)
+        run: choco install -y ninja || true
+
+      - name: Setup CMake (ensures a recent CMake on the runner)
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.27'    # you can pin a different version if needed
+
+      - name: Configure (Visual Studio generator, x64, Release)
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_INSTALL_PREFIX="$Env:USERPROFILE\\aaruremote" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Release)
+        run: |
+          cmake --build build --config Release -- /m
+
+      - name: Locate built executable and stage package
+        run: |
+          # Find the first .exe in the build tree (skip known tooling exes if any)
+          $exe = Get-ChildItem -Path build -Recurse -Filter *.exe |
+                 Where-Object { $_.Name -notmatch 'cmake|ninja|cl|link' } |
+                 Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "No executable found in build/ - check CMake target names or CMake output"
+            exit 1
+          }
+          Write-Host "Found exe: $($exe.FullName)"
+          New-Item -ItemType Directory -Path package -Force | Out-Null
+          Copy-Item -Path $exe.FullName -Destination package\
+
+      - name: Create zip artifact
+        run: |
+          $zipName = "aaruremote-windows-x64-release.zip"
+          if (Test-Path $zipName) { Remove-Item $zipName -Force }
+          Compress-Archive -Path package\* -DestinationPath $zipName -Force
+          Write-Host "Created $zipName"
+          echo "::set-output name=zip::$zipName"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aaruremote-windows-x64-release
+          path: aaruremote-windows-x64-release.zip
+          retention-days: 7
