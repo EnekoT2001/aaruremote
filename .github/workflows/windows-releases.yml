@@ -1,0 +1,87 @@
+name: Windows - Release builds (aaruremote) - x64 & Win32
+
+on:
+  push:
+    branches: [ "devel", "main" ]
+  pull_request:
+    branches: [ "devel", "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ x64, Win32 ]   # x64 (64-bit) and Win32 (32-bit)
+    defaults:
+      run:
+        shell: pwsh
+
+    env:
+      # CMake generator & install prefix are configured below; change only if necessary.
+      CMAKE_GENERATOR: 'Visual Studio 17 2022'
+      # install prefix (not required but provided)
+      CMAKE_INSTALL_PREFIX: "$Env:USERPROFILE\\aaruremote"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ninja (optional; not required for Visual Studio generator)
+        run: choco install -y ninja || true
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.27'
+
+      - name: Configure (Visual Studio generator)
+        run: |
+          cmake -S . -B build `
+            -G "$Env:CMAKE_GENERATOR" `
+            -A ${{ matrix.arch }} `
+            -DCMAKE_INSTALL_PREFIX="$Env:CMAKE_INSTALL_PREFIX" `
+            -DCMAKE_BUILD_TYPE=Release
+        shell: pwsh
+
+      - name: Build (Release)
+        run: |
+          cmake --build build --config Release -- /m
+        shell: pwsh
+
+      - name: Locate built executable and stage package
+        run: |
+          # Map arch name to short label for artifact naming
+          if (${{ matrix.arch }} -eq 'Win32') { $archShort = 'x86' } else { $archShort = 'x64' }
+
+          # find the first .exe that isn't a build tool
+          $exe = Get-ChildItem -Path build -Recurse -Filter *.exe |
+                 Where-Object { $_.Name -notmatch 'cmake|ninja|cl|link' } |
+                 Select-Object -First 1
+
+          if (-not $exe) {
+            Write-Error "No executable found in build/ - check CMake target names or CMake output"
+            exit 1
+          }
+
+          Write-Host "Found exe: $($exe.FullName)"
+          New-Item -ItemType Directory -Path package -Force | Out-Null
+          Copy-Item -Path $exe.FullName -Destination package\
+
+          # create deterministic zip name
+          $zipName = "aaruremote-windows-${archShort}-release.zip"
+          if (Test-Path $zipName) { Remove-Item $zipName -Force }
+          Compress-Archive -Path package\* -DestinationPath $zipName -Force
+
+          # expose zip name for debug logs
+          Write-Host "Created artifact: $zipName"
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aaruremote-windows-${{ matrix.arch }}-release
+          path: |
+            aaruremote-windows-*-release.zip
+          retention-days: 7
