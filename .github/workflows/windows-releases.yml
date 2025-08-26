@@ -46,29 +46,18 @@ jobs:
         run: cmake --build build --config Release -- /m
         shell: pwsh
 
-      - name: Locate built executable and stage package
+ - name: Package aaruremote.exe
         run: |
-          # Quote the matrix expansion again before using it in conditions.
           $arch = "${{ matrix.arch }}"
           if ($arch -eq 'Win32') { $archShort = 'x86' } else { $archShort = 'x64' }
-
-          Write-Host "Looking for .exe in build/ for arch $arch (artifact short name: $archShort)"
-
-          $exe = Get-ChildItem -Path build -Recurse -Filter *.exe -ErrorAction SilentlyContinue |
-                 Where-Object { $_.Name -notmatch 'cmake|ninja|cl|link' } |
-                 Select-Object -First 1
-
-          if (-not $exe) {
-            Write-Error "No executable found in build/ - check CMake target names or CMake output"
+          $exePath = "build\\Release\\aaruremote.exe"
+          if (-Not (Test-Path $exePath)) {
+            Write-Error "Expected aaruremote.exe not found at $exePath"
             exit 1
           }
-
-          Write-Host "Found exe: $($exe.FullName)"
           New-Item -ItemType Directory -Path package -Force | Out-Null
-          Copy-Item -Path $exe.FullName -Destination package\
-
+          Copy-Item $exePath package\
           $zipName = "aaruremote-windows-${archShort}-release.zip"
-          if (Test-Path $zipName) { Remove-Item $zipName -Force }
           Compress-Archive -Path package\* -DestinationPath $zipName -Force
           Write-Host "Created artifact zip: $zipName"
         shell: pwsh
