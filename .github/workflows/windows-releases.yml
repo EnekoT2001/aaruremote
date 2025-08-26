@@ -1,4 +1,4 @@
-name: Windows - Release builds (aaruremote) - x64 & Win32
+name: Windows - Release builds (aaruremote) - x64 & x86 (fixed)
 
 on:
   push:
@@ -13,22 +13,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [ x64, Win32 ]   # x64 (64-bit) and Win32 (32-bit)
+        arch: [ x64, Win32 ]
     defaults:
       run:
         shell: pwsh
 
     env:
-      # CMake generator & install prefix are configured below; change only if necessary.
       CMAKE_GENERATOR: 'Visual Studio 17 2022'
-      # install prefix (not required but provided)
       CMAKE_INSTALL_PREFIX: "$Env:USERPROFILE\\aaruremote"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Ninja (optional; not required for Visual Studio generator)
+      - name: Install Ninja (optional)
         run: choco install -y ninja || true
 
       - name: Setup CMake
@@ -38,25 +36,25 @@ jobs:
 
       - name: Configure (Visual Studio generator)
         run: |
-          cmake -S . -B build `
-            -G "$Env:CMAKE_GENERATOR" `
-            -A ${{ matrix.arch }} `
-            -DCMAKE_INSTALL_PREFIX="$Env:CMAKE_INSTALL_PREFIX" `
-            -DCMAKE_BUILD_TYPE=Release
+          # Put the matrix value into a quoted PowerShell string so it is not treated as a command token.
+          $arch = "${{ matrix.arch }}"
+          Write-Host "Configuring for architecture: $arch"
+          cmake -S . -B build -G "${{ env.CMAKE_GENERATOR }}" -A "$arch" -DCMAKE_INSTALL_PREFIX="$Env:CMAKE_INSTALL_PREFIX" -DCMAKE_BUILD_TYPE=Release
         shell: pwsh
 
       - name: Build (Release)
-        run: |
-          cmake --build build --config Release -- /m
+        run: cmake --build build --config Release -- /m
         shell: pwsh
 
       - name: Locate built executable and stage package
         run: |
-          # Map arch name to short label for artifact naming
-          if (${{ matrix.arch }} -eq 'Win32') { $archShort = 'x86' } else { $archShort = 'x64' }
+          # Quote the matrix expansion again before using it in conditions.
+          $arch = "${{ matrix.arch }}"
+          if ($arch -eq 'Win32') { $archShort = 'x86' } else { $archShort = 'x64' }
 
-          # find the first .exe that isn't a build tool
-          $exe = Get-ChildItem -Path build -Recurse -Filter *.exe |
+          Write-Host "Looking for .exe in build/ for arch $arch (artifact short name: $archShort)"
+
+          $exe = Get-ChildItem -Path build -Recurse -Filter *.exe -ErrorAction SilentlyContinue |
                  Where-Object { $_.Name -notmatch 'cmake|ninja|cl|link' } |
                  Select-Object -First 1
 
@@ -69,13 +67,10 @@ jobs:
           New-Item -ItemType Directory -Path package -Force | Out-Null
           Copy-Item -Path $exe.FullName -Destination package\
 
-          # create deterministic zip name
           $zipName = "aaruremote-windows-${archShort}-release.zip"
           if (Test-Path $zipName) { Remove-Item $zipName -Force }
           Compress-Archive -Path package\* -DestinationPath $zipName -Force
-
-          # expose zip name for debug logs
-          Write-Host "Created artifact: $zipName"
+          Write-Host "Created artifact zip: $zipName"
         shell: pwsh
 
       - name: Upload artifact
